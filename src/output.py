@@ -167,22 +167,32 @@ def type_text_with_return(text: str) -> None:
     )
 
 
-def play_sound(sound_name: str = "Ping") -> None:
+def play_sound(sound_name: str = "Ping", blocking: bool = False) -> None:
     """
     Play a system sound for audio feedback.
 
     Args:
         sound_name: Name of the system sound (without extension).
                    Common options: "Ping", "Pop", "Tink", "Purr", "Funk"
+        blocking: If False (default), play asynchronously and return immediately.
+                  If True, wait for sound to finish before returning.
     """
     sound_path = f"/System/Library/Sounds/{sound_name}.aiff"
 
     if os.path.exists(sound_path):
-        subprocess.run(
-            ["afplay", sound_path],
-            check=False,  # Don't fail if sound doesn't play
-            capture_output=True
-        )
+        if blocking:
+            subprocess.run(
+                ["afplay", sound_path],
+                check=False,
+                capture_output=True
+            )
+        else:
+            # Play asynchronously - don't block waiting for sound to finish
+            subprocess.Popen(
+                ["afplay", sound_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
 
 
 def notify(title: str, message: str) -> None:

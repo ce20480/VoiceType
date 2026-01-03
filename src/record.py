@@ -26,10 +26,18 @@ def record_with_silence_detection(
     """
     Record audio from the default microphone until silence is detected.
 
+    Starts recording immediately and stops after silence_duration seconds
+    of audio below threshold.
+
+    Typical values:
+    - Background noise: < 1% of max sample value
+    - Speech: ~4% of max sample value
+    - Threshold of 1% works well for most environments
+
     Args:
         output_path: Where to save the audio. Defaults to ~/.voice-cli/recording.wav
         silence_duration: Seconds of silence before stopping (default: 2.0)
-        threshold: Silence threshold percentage (default: "1%" - very sensitive)
+        threshold: Silence threshold in dB (default: "-50d") or percentage (e.g., "1%")
         sample_rate: Audio sample rate in Hz (default: 16000, optimal for Whisper)
         max_duration: Maximum recording time in seconds (default: 30)
         start_immediately: If True, start recording immediately without waiting for speech
@@ -55,22 +63,24 @@ def record_with_silence_detection(
     # -d: Use default audio input device
     # -c 1: Mono channel
     # -r 16000: 16kHz sample rate (optimal for Whisper)
+    #
+    # Silence detection approach:
+    # - "silence 0": Don't skip leading silence, start recording immediately
+    # - "1 duration threshold": Stop after duration seconds below threshold
+    # - trim 0 max: Safety cap to prevent hanging
+    #
+    # Using 1% threshold because typical speech peaks at ~4% and background at <1%
     cmd = [
         "sox",
         "-d",                              # Default audio device (microphone)
         "-c", "1",                         # Mono
         "-r", str(sample_rate),            # Sample rate
         output_path,                       # Output file
-        "trim", "0", str(max_duration),    # Max recording duration
-    ]
-
-    # Add silence detection to stop after silence
-    # This records immediately but stops after silence_duration of quiet
-    cmd.extend([
         "silence",
-        "1", "0.1", threshold,             # Start: need 0.1s above threshold (captures speech start)
-        "1", str(silence_duration), threshold  # Stop after silence_duration below threshold
-    ])
+        "0",                               # Don't remove leading silence (start immediately)
+        "1", str(silence_duration), threshold,  # Stop after silence_duration below threshold
+        "trim", "0", str(max_duration),    # Safety cap at max_duration
+    ]
 
     try:
         # Use timeout to prevent hanging forever

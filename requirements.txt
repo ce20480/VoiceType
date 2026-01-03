@@ -1,3 +1,10 @@
 # Voice CLI Dependencies
-# Note: faster-whisper brings its own dependencies
+
+# Transcription (brings its own dependencies)
 faster-whisper>=1.0.0
+
+# Voice Activity Detection (intelligent silence detection)
+silero-vad>=5.0
+
+# Real-time microphone access (requires portaudio: brew install portaudio)
+PyAudio>=0.2.14

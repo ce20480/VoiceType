@@ -23,9 +23,10 @@ LOG_FILE="/Users/avini/.voice-cli/raycast.log"
 echo "=== $(date) ===" >> "$LOG_FILE"
 echo "Starting voice-cli from Raycast" >> "$LOG_FILE"
 
-# Run voice-cli and capture output
-"$VENV_PYTHON" "$VOICE_CLI" 2>&1 | tee -a "$LOG_FILE"
+# Run voice-cli (stderr goes to log, stdout is silent in normal mode)
+"$VENV_PYTHON" "$VOICE_CLI" 2>> "$LOG_FILE"
+EXIT_CODE=$?
 
 # Log completion
-echo "Completed with exit code: $?" >> "$LOG_FILE"
+echo "Exit code: $EXIT_CODE" >> "$LOG_FILE"
 echo "" >> "$LOG_FILE"

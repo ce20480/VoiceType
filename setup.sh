@@ -46,7 +46,7 @@ fi
 echo "Using Python: $PYTHON ($($PYTHON --version))"
 
 # Install sox if not present
-echo "[1/6] Checking sox..."
+echo "[1/7] Checking sox..."
 if ! command -v sox &> /dev/null; then
     echo "Installing sox..."
     brew install sox
@@ -54,8 +54,17 @@ else
     echo "sox already installed"
 fi
 
+# Install portaudio (required for PyAudio)
+echo "[2/7] Checking portaudio..."
+if ! brew list portaudio &>/dev/null; then
+    echo "Installing portaudio..."
+    brew install portaudio
+else
+    echo "portaudio already installed"
+fi
+
 # Create virtual environment
-echo "[2/6] Setting up Python virtual environment..."
+echo "[3/7] Setting up Python virtual environment..."
 if [ -d "$VENV_DIR" ]; then
     echo "Removing existing venv (may have incompatible Python version)..."
     rm -rf "$VENV_DIR"
@@ -63,22 +72,26 @@ fi
 "$PYTHON" -m venv "$VENV_DIR"
 
 # Upgrade pip and install dependencies
-echo "[3/6] Installing Python dependencies..."
+echo "[4/7] Installing Python dependencies..."
 "$VENV_DIR/bin/pip" install --upgrade pip --quiet
 "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt" --quiet
 
-# Download faster-whisper model (base.en for speed)
-echo "[4/6] Downloading Whisper model (base.en)..."
+# Download faster-whisper model and Silero VAD
+echo "[5/7] Downloading models (Whisper + Silero VAD)..."
 "$VENV_DIR/bin/python" -c "
 from faster_whisper import WhisperModel
-import sys
-print('Downloading base.en model (this may take a moment)...')
+from silero_vad import load_silero_vad
+print('Downloading Whisper base.en model...')
 model = WhisperModel('base.en', device='cpu', compute_type='int8')
-print('Model downloaded successfully!')
+print('Whisper model ready!')
+print('Loading Silero VAD model...')
+vad = load_silero_vad()
+print('Silero VAD ready!')
+print('All models downloaded successfully!')
 "
 
 # Create config directory
-echo "[5/6] Creating config directory..."
+echo "[6/7] Creating config directory..."
 mkdir -p "$CONFIG_DIR"
 
 # Create default config if it doesn't exist (prefer YAML for comments)
@@ -107,7 +120,7 @@ EOF
 fi
 
 # Setup Raycast script
-echo "[6/6] Setting up Raycast integration..."
+echo "[7/7] Setting up Raycast integration..."
 mkdir -p "$RAYCAST_DIR"
 cp "$SCRIPT_DIR/raycast/voice-toggle.sh" "$RAYCAST_DIR/"
 chmod +x "$RAYCAST_DIR/voice-toggle.sh"

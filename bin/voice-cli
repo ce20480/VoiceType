@@ -19,6 +19,7 @@ SRC_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "src")
 sys.path.insert(0, SRC_DIR)
 
 from record import record_with_silence_detection, record_fixed_duration
+from vad_record import record_with_vad
 from transcribe import Transcriber
 from number_words import convert_number_words
 from output import type_text, type_text_via_clipboard, play_sound, notify, get_frontmost_app
@@ -37,10 +38,14 @@ def load_config():
     defaults = {
         "model": "base.en",
         "silence_duration": 2.0,
-        "silence_threshold": "1%",  # More sensitive threshold
+        "silence_threshold": "1%",  # Fallback for sox (background <1%, speech ~4%)
         "sound_feedback": True,
         "convert_numbers": True,
         "show_notifications": True,  # Visual feedback via macOS notifications
+        "vad_mode": True,  # Use Silero VAD for intelligent speech detection (recommended)
+        "vad_threshold": 0.5,  # VAD confidence threshold (0-1)
+        "max_duration": 30,  # Safety cap for recording
+        "duration": 5.0,  # Fallback fixed duration
     }
 
     # Try YAML first (preferred for human-readable config with comments)
@@ -95,20 +100,21 @@ def main():
         help="Recording duration in seconds (default: 5)"
     )
     parser.add_argument(
-        "--silence-mode",
+        "--no-vad",
         action="store_true",
-        help="Use silence detection instead of fixed duration (experimental)"
+        help="Disable Silero VAD, use fixed duration recording instead"
     )
     parser.add_argument(
         "--silence",
         type=float,
         default=None,
-        help="Silence duration before stopping (seconds) - only with --silence-mode"
+        help="Silence duration before stopping (seconds)"
     )
     parser.add_argument(
-        "--threshold",
+        "--vad-threshold",
+        type=float,
         default=None,
-        help="Silence threshold (e.g., '1%%') - only with --silence-mode"
+        help="VAD speech confidence threshold (0-1, default: 0.5)"
     )
     parser.add_argument(
         "--debug",
@@ -129,11 +135,12 @@ def main():
     model = args.model or config["model"]
     duration = args.duration or config.get("duration", 5.0)
     silence_duration = args.silence or config["silence_duration"]
-    threshold = args.threshold or config["silence_threshold"]
     use_sound = not args.no_sound and config["sound_feedback"]
     convert_nums = not args.no_numbers and config["convert_numbers"]
     show_notify = not args.no_notify and config.get("show_notifications", True)
-    use_silence_mode = args.silence_mode or config.get("silence_mode", False)
+    use_vad = not args.no_vad and config.get("vad_mode", True)
+    vad_threshold = args.vad_threshold or config.get("vad_threshold", 0.5)
+    max_duration = config.get("max_duration", 30)
 
     try:
         # IMPORTANT: Save frontmost app BEFORE anything else
@@ -142,20 +149,40 @@ def main():
         if args.debug:
             print(f"Frontmost app at start: {original_app}")
 
+        # Pre-load VAD model BEFORE audio feedback
+        # This ensures recording is truly ready when user hears Ping
+        if use_vad:
+            from vad_record import get_vad_model
+            if args.debug:
+                print("Pre-loading VAD model...")
+            get_vad_model()  # Loads and caches the model
+            if args.debug:
+                print("VAD model ready")
+
         # Visual feedback: recording started
         if show_notify:
-            notify("Voice CLI", f"Recording for {duration}s... Speak now!")
+            if use_vad:
+                notify("Voice CLI", "Recording... (auto-stops when you pause)")
+            else:
+                notify("Voice CLI", f"Recording for {duration}s... Speak now!")
 
-        # Audio feedback: recording started
+        # Audio feedback: recording started (model is now ready!)
         if use_sound:
             play_sound("Ping")
 
-        # Record audio - fixed duration by default (more reliable)
-        if use_silence_mode:
-            audio_path = record_with_silence_detection(
-                silence_duration=silence_duration,
-                threshold=threshold
-            )
+        # Record audio - VAD by default (auto-stops when you stop speaking)
+        if use_vad:
+            try:
+                audio_path = record_with_vad(
+                    silence_duration=silence_duration,
+                    max_duration=max_duration,
+                    speech_threshold=vad_threshold
+                )
+            except Exception as e:
+                # Fallback to fixed duration if VAD fails
+                if args.debug:
+                    print(f"VAD failed, using fixed duration: {e}")
+                audio_path = record_fixed_duration(duration=duration)
         else:
             audio_path = record_fixed_duration(duration=duration)
 
