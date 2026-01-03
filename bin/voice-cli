@@ -38,16 +38,19 @@ def check_enter_trigger(text: str, triggers: list) -> tuple:
         - cleaned_text: Text with trigger word removed if found
         - should_enter: True if trigger word was found
     """
-    text_lower = text.lower().rstrip()
+    # Strip trailing punctuation BEFORE checking for triggers
+    # Whisper often adds periods, exclamation marks, etc.
+    text_stripped = text.rstrip(" .!?,;:")
+    text_lower = text_stripped.lower()
 
     for trigger in triggers:
-        # Check if text ends with trigger word (with word boundary)
+        # Check if text ends with trigger word
         if text_lower.endswith(trigger):
             # Make sure it's a word boundary (space or start of string before trigger)
             prefix = text_lower[:-len(trigger)]
-            if prefix == "" or prefix.endswith(" ") or prefix.endswith("."):
-                # Remove the trigger word and trailing punctuation/space
-                cleaned = text[:len(prefix)].rstrip(" .")
+            if prefix == "" or prefix.endswith(" "):
+                # Remove trigger from original (preserving case in prefix)
+                cleaned = text_stripped[:len(prefix)].rstrip()
                 return (cleaned, True)
 
     return (text, False)
