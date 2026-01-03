@@ -22,7 +22,35 @@ from record import record_with_silence_detection, record_fixed_duration
 from vad_record import record_with_vad
 from transcribe import Transcriber
 from number_words import convert_number_words
-from output import type_text, type_text_via_clipboard, play_sound, notify, get_frontmost_app
+from output import type_text, type_text_via_clipboard, play_sound, notify, get_frontmost_app, press_enter
+
+
+def check_enter_trigger(text: str, triggers: list) -> tuple:
+    """
+    Check if text ends with an enter trigger word.
+
+    Args:
+        text: The transcribed text
+        triggers: List of trigger words (e.g., ["enter", "send"])
+
+    Returns:
+        Tuple of (cleaned_text, should_enter)
+        - cleaned_text: Text with trigger word removed if found
+        - should_enter: True if trigger word was found
+    """
+    text_lower = text.lower().rstrip()
+
+    for trigger in triggers:
+        # Check if text ends with trigger word (with word boundary)
+        if text_lower.endswith(trigger):
+            # Make sure it's a word boundary (space or start of string before trigger)
+            prefix = text_lower[:-len(trigger)]
+            if prefix == "" or prefix.endswith(" ") or prefix.endswith("."):
+                # Remove the trigger word and trailing punctuation/space
+                cleaned = text[:len(prefix)].rstrip(" .")
+                return (cleaned, True)
+
+    return (text, False)
 
 
 def load_config():
@@ -46,6 +74,8 @@ def load_config():
         "vad_threshold": 0.5,  # VAD confidence threshold (0-1)
         "max_duration": 30,  # Safety cap for recording
         "duration": 5.0,  # Fallback fixed duration
+        "auto_enter": True,  # Press Enter when trigger words detected at end
+        "enter_triggers": ["enter", "send", "submit", "return"],  # Words that trigger Enter
     }
 
     # Try YAML first (preferred for human-readable config with comments)
@@ -126,6 +156,11 @@ def main():
         action="store_true",
         help="Disable macOS notification popups"
     )
+    parser.add_argument(
+        "--no-enter",
+        action="store_true",
+        help="Disable auto-enter trigger words (send, enter, etc.)"
+    )
 
     args = parser.parse_args()
 
@@ -141,6 +176,8 @@ def main():
     use_vad = not args.no_vad and config.get("vad_mode", True)
     vad_threshold = args.vad_threshold or config.get("vad_threshold", 0.5)
     max_duration = config.get("max_duration", 30)
+    auto_enter = not args.no_enter and config.get("auto_enter", True)
+    enter_triggers = config.get("enter_triggers", ["enter", "send", "submit", "return"])
 
     try:
         # IMPORTANT: Save frontmost app BEFORE anything else
@@ -226,19 +263,34 @@ def main():
         if convert_nums:
             text = convert_number_words(text)
 
+        # Check for enter trigger words (e.g., "send", "enter")
+        should_enter = False
+        if auto_enter:
+            text, should_enter = check_enter_trigger(text, enter_triggers)
+
         if args.debug:
             print(f"Transcribed: {text}")
             print(f"Model: {model}")
             print(f"Audio size: {file_size} bytes")
             print(f"Target app: {original_app}")
+            print(f"Should enter: {should_enter}")
             if show_notify:
                 notify("Voice CLI", f"Done: {text[:50]}...")
         else:
             # Type the result into the original app using clipboard method
             # This is more reliable when triggered from Raycast
-            type_text_via_clipboard(text, target_app=original_app)
+            if text:  # Only paste if there's text after removing trigger
+                type_text_via_clipboard(text, target_app=original_app)
+
+            # Press Enter if trigger word was detected
+            if should_enter:
+                import time
+                time.sleep(0.05)  # Small delay to ensure paste completes
+                press_enter()
+
             if show_notify:
-                notify("Voice CLI", f"Typed: {text[:50]}...")
+                action = "Sent" if should_enter else "Typed"
+                notify("Voice CLI", f"{action}: {text[:50]}...")
 
         # Cleanup
         os.remove(audio_path)

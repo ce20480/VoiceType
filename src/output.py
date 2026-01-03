@@ -82,6 +82,23 @@ def paste_from_clipboard() -> None:
     )
 
 
+def press_enter() -> None:
+    """
+    Simulate pressing the Enter/Return key.
+    """
+    script = '''
+    tell application "System Events"
+        keystroke return
+    end tell
+    '''
+
+    subprocess.run(
+        ["osascript", "-e", script],
+        check=False,
+        capture_output=True
+    )
+
+
 def type_text_via_clipboard(text: str, target_app: str = None) -> None:
     """
     Type text into an application using the clipboard method.
