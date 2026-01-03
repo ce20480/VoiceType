@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""
+Voice CLI - Voice-to-text for Claude Code terminal sessions.
+
+Usage:
+    voice-cli              # Record until silence, transcribe, type result
+    voice-cli --no-sound   # Disable audio feedback
+    voice-cli --no-numbers # Disable number word conversion
+    voice-cli --model small.en  # Use a different model
+"""
+
+import sys
+import os
+import argparse
+
+# Add src directory to path
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "src")
+sys.path.insert(0, SRC_DIR)
+
+from record import record_with_silence_detection, record_fixed_duration
+from transcribe import Transcriber
+from number_words import convert_number_words
+from output import type_text, type_text_via_clipboard, play_sound, notify, get_frontmost_app
+
+
+def load_config():
+    """
+    Load configuration from ~/.voice-cli/config.yaml (preferred) or config.json.
+    Falls back to defaults if no config exists or parsing fails.
+    """
+    import json
+    config_dir = os.path.expanduser("~/.voice-cli")
+    yaml_path = os.path.join(config_dir, "config.yaml")
+    json_path = os.path.join(config_dir, "config.json")
+
+    defaults = {
+        "model": "base.en",
+        "silence_duration": 2.0,
+        "silence_threshold": "1%",  # More sensitive threshold
+        "sound_feedback": True,
+        "convert_numbers": True,
+        "show_notifications": True,  # Visual feedback via macOS notifications
+    }
+
+    # Try YAML first (preferred for human-readable config with comments)
+    if os.path.exists(yaml_path):
+        try:
+            import yaml
+            with open(yaml_path) as f:
+                user_config = yaml.safe_load(f) or {}
+            defaults.update(user_config)
+            return defaults
+        except ImportError:
+            pass  # YAML not available, try JSON
+        except Exception:
+            pass  # Invalid YAML, try JSON
+
+    # Fall back to JSON
+    if os.path.exists(json_path):
+        try:
+            with open(json_path) as f:
+                user_config = json.load(f) or {}
+            defaults.update(user_config)
+        except Exception:
+            pass  # Invalid JSON, use defaults
+
+    return defaults
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Voice-to-text for terminal sessions"
+    )
+    parser.add_argument(
+        "--no-sound",
+        action="store_true",
+        help="Disable audio feedback (Ping/Pop sounds)"
+    )
+    parser.add_argument(
+        "--no-numbers",
+        action="store_true",
+        help="Disable number word to digit conversion"
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        choices=["tiny.en", "base.en", "small.en", "medium.en", "large-v3"],
+        help="Whisper model to use (default: from config or base.en)"
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=5.0,
+        help="Recording duration in seconds (default: 5)"
+    )
+    parser.add_argument(
+        "--silence-mode",
+        action="store_true",
+        help="Use silence detection instead of fixed duration (experimental)"
+    )
+    parser.add_argument(
+        "--silence",
+        type=float,
+        default=None,
+        help="Silence duration before stopping (seconds) - only with --silence-mode"
+    )
+    parser.add_argument(
+        "--threshold",
+        default=None,
+        help="Silence threshold (e.g., '1%%') - only with --silence-mode"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print debug information instead of typing"
+    )
+    parser.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Disable macOS notification popups"
+    )
+
+    args = parser.parse_args()
+
+    # Load config and override with CLI args
+    config = load_config()
+
+    model = args.model or config["model"]
+    duration = args.duration or config.get("duration", 5.0)
+    silence_duration = args.silence or config["silence_duration"]
+    threshold = args.threshold or config["silence_threshold"]
+    use_sound = not args.no_sound and config["sound_feedback"]
+    convert_nums = not args.no_numbers and config["convert_numbers"]
+    show_notify = not args.no_notify and config.get("show_notifications", True)
+    use_silence_mode = args.silence_mode or config.get("silence_mode", False)
+
+    try:
+        # IMPORTANT: Save frontmost app BEFORE anything else
+        # This is needed because Raycast may become frontmost when triggered
+        original_app = get_frontmost_app()
+        if args.debug:
+            print(f"Frontmost app at start: {original_app}")
+
+        # Visual feedback: recording started
+        if show_notify:
+            notify("Voice CLI", f"Recording for {duration}s... Speak now!")
+
+        # Audio feedback: recording started
+        if use_sound:
+            play_sound("Ping")
+
+        # Record audio - fixed duration by default (more reliable)
+        if use_silence_mode:
+            audio_path = record_with_silence_detection(
+                silence_duration=silence_duration,
+                threshold=threshold
+            )
+        else:
+            audio_path = record_fixed_duration(duration=duration)
+
+        # Audio feedback: recording stopped, processing
+        if use_sound:
+            play_sound("Pop")
+
+        # Check if audio file was created and has content
+        if not os.path.exists(audio_path):
+            if show_notify:
+                notify("Voice CLI", "No audio file created")
+            if args.debug:
+                print("No audio recorded")
+            return
+
+        file_size = os.path.getsize(audio_path)
+        if file_size < 1000:  # Less than 1KB, probably no speech
+            if show_notify:
+                notify("Voice CLI", f"No speech detected ({file_size} bytes)")
+            if args.debug:
+                print(f"Audio file too small ({file_size} bytes), no speech detected")
+            os.remove(audio_path)
+            return
+
+        # Visual feedback: transcribing
+        if show_notify:
+            notify("Voice CLI", "Transcribing...")
+
+        # Transcribe
+        text = Transcriber.transcribe(audio_path, model_name=model)
+
+        if not text:
+            if show_notify:
+                notify("Voice CLI", "No text transcribed")
+            if args.debug:
+                print("No text transcribed")
+            os.remove(audio_path)
+            return
+
+        # Convert number words to digits
+        if convert_nums:
+            text = convert_number_words(text)
+
+        if args.debug:
+            print(f"Transcribed: {text}")
+            print(f"Model: {model}")
+            print(f"Audio size: {file_size} bytes")
+            print(f"Target app: {original_app}")
+            if show_notify:
+                notify("Voice CLI", f"Done: {text[:50]}...")
+        else:
+            # Type the result into the original app using clipboard method
+            # This is more reliable when triggered from Raycast
+            type_text_via_clipboard(text, target_app=original_app)
+            if show_notify:
+                notify("Voice CLI", f"Typed: {text[:50]}...")
+
+        # Cleanup
+        os.remove(audio_path)
+
+    except KeyboardInterrupt:
+        if args.debug:
+            print("\nCancelled")
+        sys.exit(0)
+    except FileNotFoundError as e:
+        if show_notify:
+            notify("Voice CLI Error", str(e))
+        print(f"Error: {e}", file=sys.stderr)
+        print("Make sure sox is installed: brew install sox", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        if show_notify:
+            notify("Voice CLI Error", str(e)[:100])
+        print(f"Error: {e}", file=sys.stderr)
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
