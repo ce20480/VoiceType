@@ -75,7 +75,7 @@ def load_config():
         "show_notifications": True,  # Visual feedback via macOS notifications
         "vad_mode": True,  # Use Silero VAD for intelligent speech detection (recommended)
         "vad_threshold": 0.5,  # VAD confidence threshold (0-1)
-        "max_duration": 60,  # Safety cap for recording (60s allows longer dictations)
+        "max_duration": 300,  # Safety cap (5 min) - rarely hit, silence detection stops recording
         "duration": 5.0,  # Fallback fixed duration
         "auto_enter": True,  # Press Enter when trigger words detected at end
         "enter_triggers": ["enter", "send", "submit", "return"],  # Words that trigger Enter
