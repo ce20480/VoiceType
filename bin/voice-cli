@@ -12,6 +12,7 @@ Usage:
 import sys
 import os
 import argparse
+import fcntl
 
 # Add src directory to path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +24,28 @@ from vad_record import record_with_vad
 from transcribe import Transcriber
 from number_words import convert_number_words
 from output import type_text, type_text_via_clipboard, play_sound, notify, get_frontmost_app, press_enter
+
+# Lock file to prevent concurrent recordings
+LOCK_FILE = os.path.expanduser("~/.voice-cli/voice-cli.lock")
+
+
+def acquire_lock():
+    """Try to acquire exclusive lock. Returns file handle or None if already locked."""
+    os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
+    lock_fd = open(LOCK_FILE, 'w')
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock_fd
+    except BlockingIOError:
+        lock_fd.close()
+        return None
+
+
+def release_lock(lock_fd):
+    """Release the lock."""
+    if lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 def check_enter_trigger(text: str, triggers: list) -> tuple:
@@ -182,6 +205,15 @@ def main():
     auto_enter = not args.no_enter and config.get("auto_enter", True)
     enter_triggers = config.get("enter_triggers", ["enter", "send", "submit", "return"])
 
+    # Try to acquire lock (prevent concurrent recordings)
+    lock_fd = acquire_lock()
+    if lock_fd is None:
+        if show_notify:
+            notify("Voice CLI", "Recording already in progress")
+        if args.debug:
+            print("Another recording is already in progress")
+        return
+
     try:
         # IMPORTANT: Save frontmost app BEFORE anything else
         # This is needed because Raycast may become frontmost when triggered
@@ -316,6 +348,9 @@ def main():
             import traceback
             traceback.print_exc()
         sys.exit(1)
+    finally:
+        # Always release the lock when done
+        release_lock(lock_fd)
 
 
 if __name__ == "__main__":
